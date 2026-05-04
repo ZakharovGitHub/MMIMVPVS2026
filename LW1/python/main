@@ -1,0 +1,140 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+
+def generate_data(n=500, x_min=-3.0, x_max=7.0, noise_std=0.3, random_seed=42):
+    np.random.seed(random_seed)
+    X = np.random.uniform(x_min, x_max, n)
+    noise = np.random.normal(0, noise_std, n)
+    Y = 0.1 * (X - 4) * np.cos(X) + 0.5 * X + noise
+    return X, Y
+
+def kernel_epanechnikov(u):
+    return np.where(np.abs(u) <= 1, 0.75 * (1 - u**2), 0.0)
+
+def kernel_gaussian(u):
+    return (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * u**2)
+
+kernel = kernel_epanechnikov
+
+def nadaraya_watson(x_pred, X_train, Y_train, c_param, n_samples):
+    # Оценка Надарая-Ватсона с параметром размытия по формуле (4.7.5)
+    h = c_param * (n_samples ** (-1.0/5.0))
+    
+    u = (x_pred - X_train) / h
+    k_values = kernel(u)
+    
+    numerator = np.sum(k_values * Y_train)
+    denominator = np.sum(k_values)
+    
+    if denominator == 0:
+        return np.mean(Y_train)
+    
+    return numerator / denominator
+
+def predict_all(X_pred, X_train, Y_train, c_param):
+    n_samples = len(X_train)
+    n_pred = len(X_pred)
+    Y_pred = np.zeros(n_pred)
+    
+    for i in range(n_pred):
+        Y_pred[i] = nadaraya_watson(X_pred[i], X_train, Y_train, c_param, n_samples)
+    
+    return Y_pred
+
+def leave_one_out_cv(X, Y, c_param):
+    """MSE методом скользящего экзамена"""
+    n = len(X)
+    squared_errors = np.zeros(n)
+    
+    for i in range(n):
+        mask = np.ones(n, dtype=bool)
+        mask[i] = False
+        X_train = X[mask]
+        Y_train = Y[mask]
+        
+        # Передаем размер обучающей выборки (n-1)
+        Y_pred = nadaraya_watson(X[i], X_train, Y_train, c_param, n-1)
+        squared_errors[i] = (Y[i] - Y_pred) ** 2
+    
+    return np.mean(squared_errors)
+
+def find_best_c(X, Y, c_min=0.1, c_max=2.0, c_step=0.1):
+    # Поиск оптимального коэффициента c (формула 4.7.5).
+    c_values = np.arange(c_min, c_max + c_step, c_step)
+    n_c = len(c_values)
+    errors = np.zeros(n_c)
+    for i in range(n_c):
+        mse = leave_one_out_cv(X, Y, c_values[i])
+        errors[i] = mse
+        h = c_values[i] * (len(X) ** (-1.0/5.0))
+        print(f"c = {c_values[i]:.1f}, h = {h:.4f}, MSE = {mse:.6f}")
+    
+    best_idx = np.argmin(errors)
+    best_c = c_values[best_idx]
+    
+    return best_c, c_values, errors
+
+def plot_results(X, Y, X_smooth, Y_smooth, c_values, errors, best_c):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # График данных и модели
+    ax1.scatter(X, Y, alpha=0.6, color='blue', label='Обучающие данные', s=30)
+    ax1.plot(X_smooth, Y_smooth, color='red', linewidth=2, 
+             label=f'Непараметрическая регрессия (c={best_c:.1f})')
+    ax1.set_xlabel('x', fontsize=12)
+    ax1.set_ylabel('y', fontsize=12)
+    ax1.set_title('Данные и модель регрессии', fontsize=14)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # График ошибки
+    ax2.plot(c_values, errors, 'o-', color='green', linewidth=2, markersize=6)
+    ax2.axvline(x=best_c, color='red', linestyle='--', 
+                label=f'Оптимум (c={best_c:.1f})')
+    ax2.set_xlabel('Коэффициент c', fontsize=12)
+    ax2.set_ylabel('MSE (ошибка)')
+    min_error = np.min(errors)
+    ax2.set_title(f'Зависимость MSE от коэффициента c\n(минимальная MSE = {min_error:.6f})', fontsize=14)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+
+def main():
+    print("НЕПАРАМЕТРИЧЕСКАЯ РЕГРЕССИЯ РОЗЕНБЛАТТА-ПАРЗЕНА")
+    
+    # Генерация данных
+    print("\n[1] Генерация данных...")
+    start_time = time.time()
+    X, Y = generate_data(n=80)
+    generation_time = time.time() - start_time
+    
+    # Поиск оптимального коэффициента c
+    print("\n[2] Поиск оптимального коэффициента c по формуле (4.7.5)...")
+    cv_start_time = time.time()
+    best_c, c_values, errors = find_best_c(X, Y, c_min=0.1, c_max=2.0, c_step=0.1)
+    cv_time = time.time() - cv_start_time
+    min_error = np.min(errors)
+    best_h = best_c * (len(X) ** (-1.0/5.0))
+    print(f"\nОптимальный коэффициент c: {best_c:.1f}")
+    print(f"Соответствующий параметр размытия h: {best_h:.4f}")
+    print(f"Минимальная MSE: {min_error:.6f}")
+    print(f"Время поиска: {cv_time:.2f} сек")
+    print("\n[3] Построение модели регрессии...")
+    X_smooth = np.linspace(-3, 7, 200)
+    pred_start_time = time.time()
+    Y_smooth = predict_all(X_smooth, X, Y, best_c)
+    pred_time = time.time() - pred_start_time
+    print(f"Прогноз для {len(X_smooth)} точек")
+    plot_results(X, Y, X_smooth, Y_smooth, c_values, errors, best_c)
+
+    total_time = generation_time + cv_time + pred_time
+
+    print(f"ОБЩЕЕ ВРЕМЯ ВЫПОЛНЕНИЯ: {total_time:.2f} сек")
+    print(f"Оптимальное c = {best_c:.1f}, h = {best_h:.4f}")
+    print(f"Размер выборки: {len(X)}")
+
+if __name__ == "__main__":
+    main()
